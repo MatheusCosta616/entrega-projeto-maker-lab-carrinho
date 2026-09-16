@@ -5,6 +5,12 @@
 
 ## 📋 A Fazer
 
+
+## 🔨 Em Progresso
+
+
+## ✅ Concluído
+
 - [ ] B01 — Medir componentes
 - [ ] B02 — Desenhar chassi 4 rodas
 - [ ] B03 — Testar encaixe motores/rodas
@@ -31,22 +37,3 @@
 - [ ] B24 — Vídeo de demonstração
 - [ ] B25 — Organizar repositório GitHub
 - [ ] B26 — Revisão final
-
-## 🔨 Em Progresso
-
-*(vazio — mova os cartões conforme o time começa a trabalhar neles)*
-
-## ✅ Concluído
-
-*(vazio — mova os cartões finalizados para cá)*
-
----
-
-### Legenda de cores sugerida
-| Cor | Categoria |
-|---|---|
-| 🟦 Azul | Mecânica |
-| 🟨 Amarelo | Eletrônica |
-| 🟩 Verde | Software |
-| 🟪 Roxo | Integração / Testes |
-| ⬜ Cinza | Documentação |

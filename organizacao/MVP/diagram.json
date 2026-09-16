@@ -1,0 +1,400 @@
+{
+  "version": 1,
+  "author": "Guilherme / FIAP",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-devkit-c-v4",
+      "id": "esp",
+      "top": 185,
+      "left": 40,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-hc-sr04",
+      "id": "ultrasonic",
+      "top": 20,
+      "left": 285,
+      "attrs": {
+        "distance": "400"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "echoR1",
+      "top": 120,
+      "left": 250,
+      "rotate": 90,
+      "attrs": {
+        "value": "1000"
+      }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "echoR2",
+      "top": 120,
+      "left": 365,
+      "rotate": 90,
+      "attrs": {
+        "value": "2000"
+      }
+    },
+    {
+      "type": "chip-tb6612fng",
+      "id": "driver",
+      "top": 185,
+      "left": 390,
+      "attrs": {
+        "Vs": "6"
+      }
+    },
+    {
+      "type": "chip-stepper-esc",
+      "id": "escLeft",
+      "top": 85,
+      "left": 620,
+      "attrs": {
+        "Tau": "10",
+        "Texp": "-2",
+        "MaxSpeed": "220"
+      }
+    },
+    {
+      "type": "wokwi-stepper-motor",
+      "id": "motorLeft",
+      "top": 65,
+      "left": 835,
+      "attrs": {
+        "size": "17",
+        "display": "angle",
+        "arrow": "orange"
+      }
+    },
+    {
+      "type": "chip-stepper-esc",
+      "id": "escRight",
+      "top": 365,
+      "left": 620,
+      "attrs": {
+        "Tau": "10",
+        "Texp": "-2",
+        "MaxSpeed": "220"
+      }
+    },
+    {
+      "type": "wokwi-stepper-motor",
+      "id": "motorRight",
+      "top": 345,
+      "left": 835,
+      "attrs": {
+        "size": "17",
+        "display": "angle",
+        "arrow": "orange"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "title",
+      "top": -65,
+      "left": 25,
+      "attrs": {
+        "text": "ROBO 2WD - ESP32 + TB6612FNG + HC-SR04"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "sensorLabel",
+      "top": -15,
+      "left": 270,
+      "attrs": {
+        "text": "SENSOR ULTRASSONICO FRONTAL"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "dividerLabel",
+      "top": 95,
+      "left": 240,
+      "attrs": {
+        "text": "DIVISOR ECHO 5V -> 3.3V"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "espLabel",
+      "top": 150,
+      "left": 50,
+      "attrs": {
+        "text": "ESP32"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "driverLabel",
+      "top": 150,
+      "left": 375,
+      "attrs": {
+        "text": "TB6612FNG"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "leftLabel",
+      "top": 47,
+      "left": 815,
+      "attrs": {
+        "text": "MOTOR ESQUERDO"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "rightLabel",
+      "top": 327,
+      "left": 815,
+      "attrs": {
+        "text": "MOTOR DIREITO"
+      }
+    },
+    {
+      "type": "wokwi-text",
+      "id": "note",
+      "top": 545,
+      "left": 210,
+      "attrs": {
+        "text": "No robo real: motores TT DC. Ajuste a distancia do HC-SR04 clicando no sensor."
+      }
+    }
+  ],
+  "connections": [
+    [
+      "esp:TX",
+      "$serialMonitor:RX",
+      "",
+      []
+    ],
+    [
+      "esp:RX",
+      "$serialMonitor:TX",
+      "",
+      []
+    ],
+    [
+      "esp:18",
+      "ultrasonic:TRIG",
+      "orange",
+      []
+    ],
+    [
+      "esp:5V",
+      "ultrasonic:VCC",
+      "red",
+      []
+    ],
+    [
+      "esp:GND.3",
+      "ultrasonic:GND",
+      "black",
+      []
+    ],
+    [
+      "ultrasonic:ECHO",
+      "echoR1:1",
+      "purple",
+      []
+    ],
+    [
+      "echoR1:2",
+      "esp:19",
+      "purple",
+      []
+    ],
+    [
+      "echoR1:2",
+      "echoR2:1",
+      "purple",
+      []
+    ],
+    [
+      "echoR2:2",
+      "esp:GND.3",
+      "black",
+      []
+    ],
+    [
+      "esp:25",
+      "driver:AIN1",
+      "green",
+      []
+    ],
+    [
+      "esp:26",
+      "driver:AIN2",
+      "green",
+      []
+    ],
+    [
+      "esp:27",
+      "driver:PWMA",
+      "blue",
+      []
+    ],
+    [
+      "esp:32",
+      "driver:BIN1",
+      "yellow",
+      []
+    ],
+    [
+      "esp:33",
+      "driver:BIN2",
+      "yellow",
+      []
+    ],
+    [
+      "esp:14",
+      "driver:PWMB",
+      "blue",
+      []
+    ],
+    [
+      "esp:13",
+      "driver:nSTBY",
+      "purple",
+      []
+    ],
+    [
+      "esp:3V3",
+      "driver:VCC",
+      "red",
+      []
+    ],
+    [
+      "esp:5V",
+      "driver:VMOT",
+      "red",
+      []
+    ],
+    [
+      "esp:GND.3",
+      "driver:GND",
+      "black",
+      []
+    ],
+    [
+      "esp:GND.3",
+      "driver:GND1",
+      "black",
+      []
+    ],
+    [
+      "esp:GND.3",
+      "driver:GND2",
+      "black",
+      []
+    ],
+    [
+      "driver:AO1",
+      "escLeft:INA",
+      "green",
+      []
+    ],
+    [
+      "driver:AO2",
+      "escLeft:INB",
+      "green",
+      []
+    ],
+    [
+      "driver:VMOT",
+      "escLeft:VMOT",
+      "red",
+      []
+    ],
+    [
+      "driver:GND",
+      "escLeft:GND",
+      "black",
+      []
+    ],
+    [
+      "escLeft:A+",
+      "motorLeft:A+",
+      "green",
+      []
+    ],
+    [
+      "escLeft:A-",
+      "motorLeft:A-",
+      "green",
+      []
+    ],
+    [
+      "escLeft:B+",
+      "motorLeft:B+",
+      "blue",
+      []
+    ],
+    [
+      "escLeft:B-",
+      "motorLeft:B-",
+      "blue",
+      []
+    ],
+    [
+      "driver:BO1",
+      "escRight:INA",
+      "yellow",
+      []
+    ],
+    [
+      "driver:BO2",
+      "escRight:INB",
+      "yellow",
+      []
+    ],
+    [
+      "driver:VMOT",
+      "escRight:VMOT",
+      "red",
+      []
+    ],
+    [
+      "driver:GND",
+      "escRight:GND",
+      "black",
+      []
+    ],
+    [
+      "escRight:A+",
+      "motorRight:A+",
+      "yellow",
+      []
+    ],
+    [
+      "escRight:A-",
+      "motorRight:A-",
+      "yellow",
+      []
+    ],
+    [
+      "escRight:B+",
+      "motorRight:B+",
+      "blue",
+      []
+    ],
+    [
+      "escRight:B-",
+      "motorRight:B-",
+      "blue",
+      []
+    ]
+  ],
+  "dependencies": {
+    "chip-tb6612fng": "github:drf5n/Wokwi-Chip-TB6612FNG@1.0.0",
+    "chip-stepper-esc": "github:drf5n/Wokwi-Chip-stepper-esc@1.0.0"
+  },
+  "serialMonitor": {
+    "display": "always",
+    "newline": "lf"
+  }
+}
