@@ -1,0 +1,15 @@
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Arduino / PlatformIO
+build/
+.pio/
+*.elf
+*.bin
+*.hex
+
+# Editores
+.vscode/
+.idea/
