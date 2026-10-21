@@ -29,8 +29,8 @@ Carrinho-robô 2WD controlado por ESP32 via Wi-Fi, equipado com sensor ultrassô
 
 | Conteúdo | Local |
 |---|---|
-| Firmware do CP1 | [`src/carrinho/carrinho.ino`](src/carrinho/carrinho.ino) |
-| Firmware do CP2 com TinyML | [`src/carrinho-cp2/carrinho-cp2.ino`](src/carrinho-cp2/carrinho-cp2.ino) |
+| Firmware do CP1 | [`src/cp1/carrinho.ino`](src/cp1/carrinho.ino) |
+| Firmware do CP2 com TinyML | [`src/cp2/carrinho-cp2.ino`](src/cp2/carrinho-cp2.ino) |
 | Sketch de coleta de dados | [`src/coleta-esp/coleta-esp.ino`](src/coleta-esp/coleta-esp.ino) |
 | Dataset de treinamento | [`dados/`](dados/) |
 | Biblioteca exportada do Edge Impulse | [`model/biblioteca-edge-impulse/`](model/biblioteca-edge-impulse/) |
@@ -104,7 +104,7 @@ As evidências disponíveis estão em [`docs/evidencias/`](docs/evidencias/).
 1. Instale a Arduino IDE 2.x.
 2. Instale o pacote de placas ESP32 da Espressif pelo Gerenciador de Placas.
 3. Importe a biblioteca ZIP exportada pelo Edge Impulse usando **Sketch → Include Library → Add .ZIP Library**.
-4. Abra [`src/carrinho-cp2/carrinho-cp2.ino`](src/carrinho-cp2/carrinho-cp2.ino).
+4. Abra [`src/cp2/carrinho-cp2.ino`](src/cp2/carrinho-cp2.ino).
 5. Selecione a placa correspondente ao ESP32 utilizado, como **ESP32 Dev Module**, e a porta serial correta.
 6. Confira as configurações de Wi-Fi e os pinos definidos no firmware antes do envio.
 7. Compile e envie o programa para o ESP32.
