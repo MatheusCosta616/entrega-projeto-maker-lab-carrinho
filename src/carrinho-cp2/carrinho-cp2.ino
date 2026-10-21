@@ -1,15 +1,8 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <cstring>
+#include <guiespim18-project-1_inferencing.h>
 
-// Use o nome gerado pelo projeto Edge Impulse atual ou o nome legado.
-#if __has_include(<guiespim18_project_1_inferencing.h>)
-  #include <guiespim18_project_1_inferencing.h>
-#elif __has_include(<CP2_TinyML_ESP32_inferencing.h>)
-  #include <CP2_TinyML_ESP32_inferencing.h>
-#else
-  #error "Instale a biblioteca C++ do Edge Impulse (Deployment v2) na Arduino IDE."
-#endif
 
 // =========================
 // PINOS: iguais ao firmware CP1
@@ -28,9 +21,13 @@
 // =========================
 #define CONFIANCA_MINIMA 0.60f
 #define DISTANCIA_EMERGENCIA_CM 8.0f  // parada de seguranca independente do modelo
+#define DISTANCIA_EVASAO_CM 30.0f     // antecipa a evasao sem esperar a janela TinyML
+#define DISTANCIA_MANUAL_MAXIMA_CM 30.0f
 #define PWM_NORMAL 255
 #define PWM_ATENCAO 140
 #define PWM_GIRO 190
+#define TEMPO_PARADA_ANTES_RECUO_MS 250
+#define TEMPO_RECUO_MS 220
 #define TEMPO_MEIA_VOLTA_MS 650       // calibrar no chao usado na demonstracao
 
 const char* ssid = "ESP32_RC";
@@ -42,14 +39,20 @@ WebServer server(80);
 float amostrasTinyML[EI_CLASSIFIER_RAW_SAMPLE_COUNT];
 size_t numeroAmostras = 0;
 unsigned long ultimaLeituraMs = 0;
+unsigned long ultimoDisparoSensorMs = 0;
 
 bool andandoFrente = false;
 bool giroPerigoAtivo = false;
 bool bloqueioPerigo = false;
 bool perigoJaTratado = false;
+bool modoAutonomo = false;
+bool recuoAntesDoGiro = false;
+bool paradaAntesDoRecuo = false;
+uint8_t inferenciasSegurasSeguidas = 0;
 unsigned long fimGiroMs = 0;
 
 char classeTinyML[24] = "aguardando";
+char decisaoTinyML[64] = "aguardando leituras";
 float confiancaTinyML = 0.0f;
 float ultimaDistancia = -1.0f;
 int velocidadeAtual = PWM_ATENCAO;  // começa devagar até a primeira inferência
@@ -58,20 +61,31 @@ int velocidadeAtual = PWM_ATENCAO;  // começa devagar até a primeira inferênc
 // SENSOR HC-SR04
 // =========================
 float medirDistancia() {
+  // Respeita o intervalo minimo entre pulsos do HC-SR04 para evitar eco antigo.
+  while (ultimoDisparoSensorMs != 0 &&
+         millis() - ultimoDisparoSensorMs < 60UL) {
+    delay(1);
+  }
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
+  ultimoDisparoSensorMs = millis();
 
-  unsigned long duracao = pulseIn(ECHO_PIN, HIGH, 30000UL);
-  if (duracao == 0) return -1.0f;
+  const unsigned long duracao = pulseIn(ECHO_PIN, HIGH, 25000UL);
+  if (duracao == 0) return -1.0f;  // tentar novamente no proximo ciclo
   return duracao * 0.0343f / 2.0f;
 }
 
 void definirClasse(const char* classe) {
   strncpy(classeTinyML, classe, sizeof(classeTinyML) - 1);
   classeTinyML[sizeof(classeTinyML) - 1] = '\0';
+}
+
+void definirDecisao(const char* decisao) {
+  strncpy(decisaoTinyML, decisao, sizeof(decisaoTinyML) - 1);
+  decisaoTinyML[sizeof(decisaoTinyML) - 1] = '\0';
 }
 
 // =========================
@@ -86,10 +100,14 @@ void pararMotores(const char* motivo = "STOP") {
   digitalWrite(IN4_PIN, LOW);
   andandoFrente = false;
   giroPerigoAtivo = false;
+  recuoAntesDoGiro = false;
+  paradaAntesDoRecuo = false;
+  definirDecisao(motivo);
   Serial.println(motivo);
 }
 
 void aplicarPwmFrente(int pwm) {
+  // Os dois canais de habilitacao devem receber o mesmo PWM para tracao reta.
   digitalWrite(IN1_PIN, HIGH);
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, HIGH);
@@ -98,26 +116,23 @@ void aplicarPwmFrente(int pwm) {
   analogWrite(ENB_PIN, pwm);
   velocidadeAtual = pwm;
   andandoFrente = true;
+  definirDecisao(pwm == PWM_NORMAL ? "Avancando" : "Avancando devagar");
 }
 
 void frente() {
-  if (giroPerigoAtivo) return;
-  if (ultimaDistancia < 0.0f) {
-    pararMotores("Sem leitura valida do sensor: frente bloqueada");
+  // No manual, o TinyML nao participa: o sensor aplica a protecao do CP1.
+  const float distancia = medirDistancia();
+  ultimaDistancia = distancia;
+  if (distancia < 0.0f) {
+    pararMotores("Sem eco do HC-SR04; frente bloqueada por seguranca");
     return;
   }
-  if (bloqueioPerigo ||
-      (strcmp(classeTinyML, "perigo") == 0 && confiancaTinyML >= CONFIANCA_MINIMA)) {
-    pararMotores("Frente bloqueada pelo TinyML: perigo");
+  if (distancia <= DISTANCIA_MANUAL_MAXIMA_CM) {
+    pararMotores("Obstaculo a 30 cm ou menos; frente bloqueada");
     return;
   }
-
-  // Mantém a velocidade reduzida até o modelo reconhecer uma classe segura.
-  const int pwm = (strcmp(classeTinyML, "livre") == 0 &&
-                   confiancaTinyML >= CONFIANCA_MINIMA)
-                    ? PWM_NORMAL : PWM_ATENCAO;
-  aplicarPwmFrente(pwm);
-  Serial.printf("FORWARD | PWM %d\n", pwm);
+  aplicarPwmFrente(PWM_NORMAL);
+  Serial.printf("FORWARD manual | PWM %d | %.1f cm\n", PWM_NORMAL, distancia);
 }
 
 void re() {
@@ -129,6 +144,7 @@ void re() {
   analogWrite(ENA_PIN, PWM_NORMAL);
   analogWrite(ENB_PIN, PWM_NORMAL);
   andandoFrente = false;
+  definirDecisao("Re manual");
   Serial.println("BACKWARD");
 }
 
@@ -141,6 +157,7 @@ void esquerda() {
   digitalWrite(IN4_PIN, LOW);
   analogWrite(ENB_PIN, PWM_NORMAL);
   andandoFrente = false;
+  definirDecisao("Curva manual a esquerda");
   Serial.println("LEFT");
 }
 
@@ -153,6 +170,7 @@ void direita() {
   digitalWrite(IN3_PIN, LOW);
   digitalWrite(IN4_PIN, LOW);
   andandoFrente = false;
+  definirDecisao("Curva manual a direita");
   Serial.println("RIGHT");
 }
 
@@ -165,8 +183,38 @@ void iniciarMeiaVolta() {
   perigoJaTratado = true;
   andandoFrente = false;
   giroPerigoAtivo = true;
-  fimGiroMs = millis() + TEMPO_MEIA_VOLTA_MS;
+  recuoAntesDoGiro = true;
+  paradaAntesDoRecuo = true;
+  fimGiroMs = millis() + TEMPO_PARADA_ANTES_RECUO_MS;
+  analogWrite(ENA_PIN, 0);
+  analogWrite(ENB_PIN, 0);
+  digitalWrite(IN1_PIN, LOW);
+  digitalWrite(IN2_PIN, LOW);
+  digitalWrite(IN3_PIN, LOW);
+  digitalWrite(IN4_PIN, LOW);
+  definirDecisao("Perigo: parando antes de recuar");
+  Serial.println("Perigo: pausa de seguranca antes do recuo e giro");
+}
 
+void iniciarRecuo() {
+  paradaAntesDoRecuo = false;
+  recuoAntesDoGiro = true;
+  fimGiroMs = millis() + TEMPO_RECUO_MS;
+  definirDecisao("Perigo: recuando antes de virar");
+  digitalWrite(IN1_PIN, LOW);
+  digitalWrite(IN2_PIN, HIGH);
+  digitalWrite(IN3_PIN, LOW);
+  digitalWrite(IN4_PIN, HIGH);
+  analogWrite(ENA_PIN, PWM_GIRO);
+  analogWrite(ENB_PIN, PWM_GIRO);
+  Serial.println("Evasao: recuando");
+}
+
+void iniciarRotacao() {
+  recuoAntesDoGiro = false;
+  paradaAntesDoRecuo = false;
+  fimGiroMs = millis() + TEMPO_MEIA_VOLTA_MS;
+  definirDecisao("Perigo: girando 180");
   digitalWrite(IN1_PIN, HIGH);
   digitalWrite(IN2_PIN, LOW);
   digitalWrite(IN3_PIN, LOW);
@@ -174,14 +222,28 @@ void iniciarMeiaVolta() {
   analogWrite(ENA_PIN, PWM_GIRO);
   analogWrite(ENB_PIN, PWM_GIRO);
 
-  Serial.println("TinyML: PERIGO - giro de meia volta");
+  Serial.println("Evasao: giro de meia volta");
 }
 
 void atualizarGiro() {
   if (giroPerigoAtivo && (long)(millis() - fimGiroMs) >= 0) {
-    pararMotores("Giro concluido; aguardando classe segura para liberar frente");
-    // Mantem bloqueioPerigo: o usuario pode usar re/curvas; frente so libera
-    // quando uma inferencia confiavel identificar atencao ou livre.
+    if (paradaAntesDoRecuo) {
+      iniciarRecuo();
+      return;
+    }
+    if (recuoAntesDoGiro) {
+      iniciarRotacao();
+      return;
+    }
+
+    pararMotores("Giro concluido; aguardando leituras novas");
+    // Descarta a janela que ainda poderia conter distancias da parede antiga.
+    numeroAmostras = 0;
+    confiancaTinyML = 0.0f;
+    inferenciasSegurasSeguidas = 0;
+    definirClasse("aguardando");
+    perigoJaTratado = false;
+    ultimaLeituraMs = millis();
   }
 }
 
@@ -226,34 +288,69 @@ bool classificarTinyML() {
 }
 
 void aplicarDecisaoTinyML() {
+  // Nao permita que uma classificacao durante a manobra interrompa pausa/recuo/giro.
+  if (giroPerigoAtivo) return;
+
   const bool confiavel = confiancaTinyML >= CONFIANCA_MINIMA;
 
-  if (confiavel && strcmp(classeTinyML, "perigo") == 0) {
-    bloqueioPerigo = true;
+  if (!confiavel) {
+    inferenciasSegurasSeguidas = 0;
     velocidadeAtual = 0;
-    if (!perigoJaTratado) {
-      if (andandoFrente) iniciarMeiaVolta();
-      else {
-        perigoJaTratado = true;
-        pararMotores("TinyML: perigo detectado; frente bloqueada");
-      }
+    definirDecisao("Baixa confianca: aguardando");
+    if (modoAutonomo && !giroPerigoAtivo) {
+      pararMotores("AUTO: baixa confianca; parado");
+    } else if (andandoFrente && !giroPerigoAtivo) {
+      aplicarPwmFrente(PWM_ATENCAO);
     }
     return;
   }
 
-  if (confiavel && (strcmp(classeTinyML, "livre") == 0 ||
-                    strcmp(classeTinyML, "atencao") == 0)) {
-    // So uma classe segura com confianca suficiente libera novo comando de frente.
-    bloqueioPerigo = false;
-    perigoJaTratado = false;
-    velocidadeAtual = strcmp(classeTinyML, "livre") == 0
-                        ? PWM_NORMAL : PWM_ATENCAO;
-  } else {
-    // Baixa confianca: comportamento conservador, velocidade reduzida.
-    velocidadeAtual = PWM_ATENCAO;
+  if (confiavel && strcmp(classeTinyML, "perigo") == 0) {
+    inferenciasSegurasSeguidas = 0;
+    bloqueioPerigo = true;
+    velocidadeAtual = 0;
+    if (!perigoJaTratado) {
+      if (modoAutonomo || andandoFrente) iniciarMeiaVolta();
+      else {
+        perigoJaTratado = true;
+        pararMotores("TinyML: perigo detectado; frente bloqueada");
+      }
+    } else if (modoAutonomo && !giroPerigoAtivo && andandoFrente) {
+      pararMotores("AUTO: perigo detectado; parado");
+    }
+    return;
   }
 
-  if (andandoFrente && !giroPerigoAtivo) {
+  if (confiavel && strcmp(classeTinyML, "atencao") == 0) {
+    inferenciasSegurasSeguidas = 0;
+    velocidadeAtual = 0;
+    if (modoAutonomo || andandoFrente) {
+      pararMotores("TinyML: atencao; carrinho parado");
+    } else {
+      definirDecisao("TinyML: atencao; aguardando");
+    }
+    return;
+  }
+
+  if (confiavel && strcmp(classeTinyML, "livre") == 0) {
+    if (inferenciasSegurasSeguidas < 3) inferenciasSegurasSeguidas++;
+    // Exige tres inferencias seguras para confirmar que a frente esta livre.
+    if (modoAutonomo && inferenciasSegurasSeguidas < 3) {
+      velocidadeAtual = 0;
+      if (!andandoFrente && !giroPerigoAtivo) {
+        definirDecisao("Validando 3 leituras seguras");
+      }
+      return;
+    }
+    bloqueioPerigo = false;
+    perigoJaTratado = false;
+    velocidadeAtual = PWM_NORMAL;
+  }
+
+  if (modoAutonomo && !giroPerigoAtivo) {
+    // No modo autonomo, uma classe segura valida retoma a marcha sozinha.
+    aplicarPwmFrente(velocidadeAtual);
+  } else if (andandoFrente && !giroPerigoAtivo) {
     aplicarPwmFrente(velocidadeAtual);
   }
 }
@@ -269,9 +366,34 @@ void atualizarTinyML() {
     numeroAmostras = 0;
     confiancaTinyML = 0.0f;
     definirClasse("sem_leitura");
+    inferenciasSegurasSeguidas = 0;
     velocidadeAtual = PWM_ATENCAO;
-    if (andandoFrente || giroPerigoAtivo) {
+    if (giroPerigoAtivo) {
+      // Durante recuo/giro o HC-SR04 pode apontar para o lado e perder o eco.
+      // Deixe a manobra temporizada terminar; nao classifique -1 como distancia.
+      definirDecisao(recuoAntesDoGiro
+                       ? "Sem eco durante recuo; manobra continua"
+                       : "Sem eco durante giro; manobra continua");
+      Serial.println("HC-SR04 sem eco durante evasao; mantendo a manobra");
+      return;
+    }
+    definirDecisao("Sem eco: aguardando leitura valida");
+    Serial.println("HC-SR04 sem eco; leitura ignorada");
+    if (andandoFrente || modoAutonomo) {
       pararMotores("Parada de seguranca: sem eco do HC-SR04");
+    }
+    return;
+  }
+
+  // No modo manual, o sensor apenas mantem a protecao de proximidade do CP1.
+  // O classificador e as classes TinyML nao podem comandar os motores aqui.
+  if (!modoAutonomo) {
+    numeroAmostras = 0;
+    confiancaTinyML = 0.0f;
+    definirClasse("manual");
+    definirDecisao("Modo manual: aguardando comando do celular");
+    if (andandoFrente && distancia <= DISTANCIA_MANUAL_MAXIMA_CM) {
+      pararMotores("CP1 manual: obstaculo a 30 cm ou menos; parado");
     }
     return;
   }
@@ -280,8 +402,22 @@ void atualizarTinyML() {
   if (distancia <= DISTANCIA_EMERGENCIA_CM) {
     numeroAmostras = 0;
     bloqueioPerigo = true;
-    perigoJaTratado = true;
-    pararMotores("Parada de emergencia: obstaculo a menos de 8 cm");
+    inferenciasSegurasSeguidas = 0;
+    perigoJaTratado = false;  // ao sair da zona critica, o modelo ainda pode acionar evasao
+    definirDecisao("Emergencia: pausa, recuo e giro");
+    iniciarMeiaVolta();
+    return;
+  }
+
+  // Protecao rapida: nao espera a janela de 21 leituras quando a parede esta perto.
+  if (modoAutonomo && distancia <= DISTANCIA_EVASAO_CM) {
+    numeroAmostras = 0;
+    inferenciasSegurasSeguidas = 0;
+    bloqueioPerigo = true;
+    if (!giroPerigoAtivo && !perigoJaTratado) {
+      definirDecisao("Distancia curta: iniciando evasao");
+      iniciarMeiaVolta();
+    }
     return;
   }
 
@@ -310,11 +446,12 @@ const char webpage[] PROGMEM = R"rawliteral(
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>ESP32 RC CAR - CP2 TinyML</title>
 <style>
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}body{margin:0;background:#111;color:white;font-family:Arial,sans-serif;text-align:center;user-select:none;touch-action:manipulation}h1{margin-top:25px;font-size:28px}.controls{width:300px;margin:30px auto;display:grid;grid-template-columns:90px 90px 90px;grid-template-rows:90px 90px 90px;gap:15px;justify-content:center}button{width:90px;height:90px;font-size:42px;border:0;border-radius:20px;background:#333;color:white;touch-action:manipulation}.forward{grid-column:2;grid-row:1}.left{grid-column:1;grid-row:2}.stop{grid-column:2;grid-row:2;background:#b00000}.right{grid-column:3;grid-row:2}.backward{grid-column:2;grid-row:3}#status{margin:16px auto;padding:12px;max-width:360px;color:#ddd;background:#222;border-radius:10px}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}body{margin:0;background:#111;color:white;font-family:Arial,sans-serif;text-align:center;user-select:none;touch-action:manipulation}h1{margin-top:25px;font-size:28px}.controls{width:300px;margin:20px auto;display:grid;grid-template-columns:90px 90px 90px;grid-template-rows:90px 90px 90px;gap:15px;justify-content:center}button{width:90px;height:90px;font-size:42px;border:0;border-radius:20px;background:#333;color:white;touch-action:manipulation}.forward{grid-column:2;grid-row:1}.left{grid-column:1;grid-row:2}.stop{grid-column:2;grid-row:2;background:#b00000}.right{grid-column:3;grid-row:2}.backward{grid-column:2;grid-row:3}.auto{width:min(300px,90vw);height:58px;font-size:20px;background:#176b3a;border-radius:12px}.autooff{background:#555}#status{margin:16px auto;padding:12px;max-width:360px;color:#ddd;background:#222;border-radius:10px;line-height:1.5}
 </style>
 </head>
 <body>
 <h1>ESP32 RC CAR</h1>
+<button id="autoButton" class="auto" onclick="alternarAuto()">LIGAR MODO AUTO</button>
 <div class="controls">
 <button class="forward" onclick="sendCommand('forward')">&#8593;</button>
 <button class="left" onclick="sendCommand('left')">&#8592;</button>
@@ -324,9 +461,10 @@ const char webpage[] PROGMEM = R"rawliteral(
 </div>
 <div id="status">TinyML inicializando...</div>
 <script>
-function atualizar(){fetch('/status').then(r=>r.text()).then(t=>document.getElementById('status').textContent=t).catch(()=>{});}
+function atualizar(){fetch('/status').then(r=>r.json()).then(s=>{const d=Number(s.distancia)<0?'sem eco':s.distancia+' cm';document.getElementById('status').innerHTML='Modo: <b>'+s.modo+'</b><br>Decisao: '+s.decisao+'<br>Classe: '+s.classe+' ('+s.confianca+'%)<br>Distancia: '+d+' | PWM: '+s.pwm;const b=document.getElementById('autoButton');b.textContent=s.auto?'DESLIGAR MODO AUTO':'LIGAR MODO AUTO';b.className=s.auto?'auto autooff':'auto';}).catch(()=>{});}
 setInterval(atualizar,500);
-function sendCommand(cmd){fetch('/command?cmd='+cmd).then(r=>r.text()).then(t=>{document.getElementById('status').textContent=t;atualizar();}).catch(()=>{});}
+function sendCommand(cmd){fetch('/command?cmd='+cmd).then(()=>atualizar()).catch(()=>{});}
+function alternarAuto(){fetch('/command?cmd='+((document.getElementById('autoButton').textContent==='LIGAR MODO AUTO')?'auto_on':'auto_off')).then(()=>atualizar()).catch(()=>{});}
 </script>
 </body>
 </html>
@@ -339,11 +477,36 @@ void handleCommand() {
   }
 
   const String cmd = server.arg("cmd");
+  if (cmd == "auto_on") {
+    modoAutonomo = true;
+    perigoJaTratado = false;
+    bloqueioPerigo = false;
+    numeroAmostras = 0;  // comeca com uma janela fresca ao ativar o automatico
+    inferenciasSegurasSeguidas = 0;
+    confiancaTinyML = 0.0f;
+    definirClasse("aguardando");
+    pararMotores("Modo AUTO ligado; aguardando novas leituras");
+    server.send(200, "text/plain", "Modo AUTO ligado");
+    return;
+  }
+  if (cmd == "auto_off") {
+    modoAutonomo = false;
+    inferenciasSegurasSeguidas = 0;
+    pararMotores("Modo AUTO desligado");
+    server.send(200, "text/plain", "Modo AUTO desligado");
+    return;
+  }
+
+  // Comando do celular assume controle manual e cancela evasao automatica em curso.
+  if (modoAutonomo && giroPerigoAtivo) {
+    pararMotores("Modo manual: manobra automatica cancelada");
+  }
+  modoAutonomo = false;
   if (cmd == "forward") frente();
   else if (cmd == "backward") re();
   else if (cmd == "left") esquerda();
   else if (cmd == "right") direita();
-  else if (cmd == "stop") pararMotores("STOP manual");
+  else if (cmd == "stop") pararMotores("STOP manual; AUTO desligado");
   else {
     server.send(400, "text/plain", "Comando desconhecido");
     return;
@@ -353,12 +516,14 @@ void handleCommand() {
 }
 
 void handleStatus() {
-  char texto[128];
+  char texto[256];
   snprintf(texto, sizeof(texto),
-           "TinyML: %s (%.0f%%) | Distancia: %.1f cm | PWM: %d%s",
-           classeTinyML, confiancaTinyML * 100.0f, ultimaDistancia,
-           velocidadeAtual, giroPerigoAtivo ? " | GIRANDO 180" : "");
-  server.send(200, "text/plain", texto);
+           "{\"auto\":%s,\"modo\":\"%s\",\"decisao\":\"%s\",\"classe\":\"%s\",\"confianca\":%.0f,\"distancia\":%.1f,\"pwm\":%d}",
+           modoAutonomo ? "true" : "false",
+           modoAutonomo ? "AUTONOMO" : "MANUAL",
+           decisaoTinyML, classeTinyML, confiancaTinyML * 100.0f,
+           ultimaDistancia, velocidadeAtual);
+  server.send(200, "application/json", texto);
 }
 
 // =========================
